@@ -290,10 +290,10 @@ func ConvertNetFlowDataSet(version uint16, baseTime uint32, uptime uint32, recor
 			DecodeUNumber(v, &(flowMessage.Bytes))
 		case netflow.NFV9_FIELD_IN_PKTS:
 			DecodeUNumber(v, &(flowMessage.Packets))
-		case netflow.NFV9_FIELD_OUT_BYTES:
-			DecodeUNumber(v, &(flowMessage.Bytes))
-		case netflow.NFV9_FIELD_OUT_PKTS:
-			DecodeUNumber(v, &(flowMessage.Packets))
+		// case netflow.NFV9_FIELD_OUT_BYTES:
+		// 	DecodeUNumber(v, &(flowMessage.Bytes))
+		// case netflow.NFV9_FIELD_OUT_PKTS:
+		// 	DecodeUNumber(v, &(flowMessage.Packets))
 
 		// L4
 		case netflow.NFV9_FIELD_L4_SRC_PORT:

@@ -1,4 +1,4 @@
-module github.com/netsampler/goflow2
+module github.com/shermdog/goflow2
 
 go 1.18
 
