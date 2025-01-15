@@ -152,60 +152,34 @@ func (d *NetFlowDriver) writeTemplate(buf *bytes.Buffer) error {
 func (d *NetFlowDriver) writeDataFlowset(buf *bytes.Buffer, fm *flowmessage.FlowMessage) error {
 	var tempBuf bytes.Buffer
 
-	// Write flow data
-	if err := binary.Write(&tempBuf, binary.BigEndian, uint32(fm.Bytes)); err != nil {
-		return err
+	fields := []struct {
+		value interface{}
+		size  int
+	}{
+		{uint32(fm.Bytes), 4},
+		{uint32(fm.Packets), 4},
+		{uint8(fm.Proto), 1},
+		{uint8(fm.IpTos), 1},
+		{uint8(fm.TcpFlags), 1},
+		{uint16(fm.SrcPort), 2},
+		{fm.SrcAddr[:4], 4},
+		{uint8(fm.SrcNet), 1},
+		{uint16(fm.InIf), 2},
+		{uint16(fm.DstPort), 2},
+		{fm.DstAddr[:4], 4},
+		{uint8(fm.DstNet), 1},
+		{uint16(fm.OutIf), 2},
+		{fm.NextHop[:4], 4},
+		{uint32(fm.TimeFlowEndNs / 1000000), 4},
+		{uint32(fm.TimeFlowStartNs / 1000000), 4},
+		{uint16(fm.Bytes), 2},
+		{uint16(fm.Packets), 2},
 	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, uint32(fm.Packets)); err != nil {
-		return err
-	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, uint8(fm.Proto)); err != nil {
-		return err
-	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, uint8(fm.IpTos)); err != nil {
-		return err
-	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, uint8(fm.TcpFlags)); err != nil {
-		return err
-	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, uint16(fm.SrcPort)); err != nil {
-		return err
-	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, fm.SrcAddr[:4]); err != nil {
-		return err
-	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, uint8(fm.SrcNet)); err != nil {
-		return err
-	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, uint16(fm.InIf)); err != nil {
-		return err
-	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, uint16(fm.DstPort)); err != nil {
-		return err
-	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, fm.DstAddr[:4]); err != nil {
-		return err
-	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, uint8(fm.DstNet)); err != nil {
-		return err
-	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, uint16(fm.OutIf)); err != nil {
-		return err
-	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, fm.NextHop[:4]); err != nil {
-		return err
-	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, uint32(fm.TimeFlowEndNs/1000000)); err != nil {
-		return err
-	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, uint32(fm.TimeFlowStartNs/1000000)); err != nil {
-		return err
-	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, uint16(fm.Bytes)); err != nil {
-		return err
-	}
-	if err := binary.Write(&tempBuf, binary.BigEndian, uint16(fm.Packets)); err != nil {
-		return err
+
+	for _, field := range fields {
+		if err := binary.Write(&tempBuf, binary.BigEndian, field.value); err != nil {
+			return fmt.Errorf("failed to write field: %v", err)
+		}
 	}
 
 	// Write data flowset header
@@ -217,12 +191,16 @@ func (d *NetFlowDriver) writeDataFlowset(buf *bytes.Buffer, fm *flowmessage.Flow
 		Length:    uint16(tempBuf.Len() + 4), // +4 for the header itself
 	}
 	if err := binary.Write(buf, binary.BigEndian, dataFlowsetHeader); err != nil {
-		return err
+		return fmt.Errorf("failed to write data flowset header: %w", err)
 	}
 
 	// Write the data
 	_, err := buf.Write(tempBuf.Bytes())
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to write data flowset content: %w", err)
+	}
+
+	return nil
 }
 
 func (d *NetFlowDriver) Close() error {
