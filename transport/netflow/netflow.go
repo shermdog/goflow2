@@ -24,10 +24,13 @@ type NetFlowDriver struct {
 	conn            net.Conn
 	templateCache   map[uint32]time.Time
 	sequenceNum     uint32
+	packetCount     uint32
+	templateRefresh uint64
 }
 
 func (d *NetFlowDriver) Prepare() error {
 	flag.StringVar(&d.destinationAddr, "netflow.destination", "127.0.0.1:2056", "NetFlow destination address")
+	flag.Uint64Var(&d.templateRefresh, "netflow.template.refresh", 20, "Number of packets between template refreshes")
 	return nil
 }
 
@@ -38,6 +41,7 @@ func (d *NetFlowDriver) Init() error {
 		return fmt.Errorf("failed to connect to NetFlow destination: %w", err)
 	}
 	d.templateCache = make(map[uint32]time.Time)
+	d.packetCount = 0
 	return nil
 }
 
@@ -55,8 +59,11 @@ func (d *NetFlowDriver) Send(key, data []byte) error {
 		}
 	}
 
+	// Determine if we need to send a template
+	sendTemplate := d.packetCount == 0 || uint64(d.packetCount)%d.templateRefresh == 0
+
 	// Format the flow message as NetFlow v9
-	packet, err := d.formatNetflowV9(flowMessage)
+	packet, err := d.formatNetflowV9(flowMessage, sendTemplate)
 	if err != nil {
 		return fmt.Errorf("failed to format NetFlow v9 packet: %w", err)
 	}
@@ -67,20 +74,27 @@ func (d *NetFlowDriver) Send(key, data []byte) error {
 		return fmt.Errorf("failed to send data to NetFlow destination: %w", err)
 	}
 
+	d.packetCount++
 	return nil
 }
 
-func (d *NetFlowDriver) formatNetflowV9(fm *flowmessage.FlowMessage) ([]byte, error) {
+func (d *NetFlowDriver) formatNetflowV9(fm *flowmessage.FlowMessage, sendTemplate bool) ([]byte, error) {
 	var buf bytes.Buffer
 
 	// Write header
-	if err := d.writeHeader(&buf, fm, 2); err != nil {
+	flowsetCount := uint16(1)
+	if sendTemplate {
+		flowsetCount++
+	}
+	if err := d.writeHeader(&buf, fm, flowsetCount); err != nil {
 		return nil, fmt.Errorf("failed to write header: %w", err)
 	}
 
-	// Write template flowset
-	if err := d.writeTemplate(&buf); err != nil {
-		return nil, fmt.Errorf("failed to write template: %w", err)
+	// Write template flowset if needed
+	if sendTemplate {
+		if err := d.writeTemplate(&buf); err != nil {
+			return nil, fmt.Errorf("failed to write template: %w", err)
+		}
 	}
 
 	// Write data flowset
