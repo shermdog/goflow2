@@ -22,7 +22,8 @@ var bufferPool = sync.Pool{
 
 const (
 	netflowV9Version      = 9
-	templateID            = 256
+	templateIDIPv4        = 256
+	templateIDIPv6        = 257
 	templateFlowsetID     = 0
 	maxPacketSize         = 1464 // Maximum size of a NetFlow packet (typical MTU minus IP and UDP headers)
 	maxFlowsetSize        = 1444 // Maximum size of a flowset (maxPacketSize minus NetFlow header)
@@ -85,6 +86,7 @@ func (d *NetFlowDriver) Send(key, data []byte) error {
 
 	return nil
 }
+
 func (d *NetFlowDriver) sendBatch() error {
 	if len(d.flowBuffer) == 0 {
 		return nil
@@ -128,7 +130,7 @@ func (d *NetFlowDriver) formatNetflowV9Batch(flows []*flowmessage.FlowMessage, s
 
 	// Write template flowset if needed
 	if sendTemplate {
-		if err := d.writeTemplate(buf); err != nil {
+		if err := d.writeBothTemplates(buf); err != nil {
 			return nil, fmt.Errorf("failed to write template: %w", err)
 		}
 	}
@@ -166,120 +168,229 @@ func (d *NetFlowDriver) writeHeader(buf *bytes.Buffer, fm *flowmessage.FlowMessa
 	return binary.Write(buf, binary.BigEndian, header)
 }
 
-func (d *NetFlowDriver) writeTemplate(buf *bytes.Buffer) error {
-	template := struct {
-		FlowsetID  uint16
-		Length     uint16
+func (d *NetFlowDriver) writeBothTemplates(buf *bytes.Buffer) error {
+	// Template FlowSet Header
+	templateHeader := struct {
+		FlowsetID uint16
+		Length    uint16
+	}{
+		FlowsetID: templateFlowsetID,
+		Length:    0, // We'll update this later
+	}
+
+	templateHeaderPos := buf.Len()
+	if err := binary.Write(buf, binary.BigEndian, templateHeader); err != nil {
+		return fmt.Errorf("failed to write template header: %w", err)
+	}
+
+	// IPv4 Template
+	if err := d.writeIPv4Template(buf); err != nil {
+		return fmt.Errorf("failed to write IPv4 template: %w", err)
+	}
+
+	// IPv6 Template
+	if err := d.writeIPv6Template(buf); err != nil {
+		return fmt.Errorf("failed to write IPv6 template: %w", err)
+	}
+
+	// Update template length
+	templateLength := uint16(buf.Len() - templateHeaderPos)
+	binary.BigEndian.PutUint16(buf.Bytes()[templateHeaderPos+2:], templateLength)
+
+	return nil
+}
+
+func (d *NetFlowDriver) writeIPv4Template(buf *bytes.Buffer) error {
+	templateIPv4 := struct {
 		TemplateID uint16
 		FieldCount uint16
-		Fields     [18]struct{ Type, Length uint16 }
+		Fields     [17]struct{ Type, Length uint16 }
 	}{
-		FlowsetID:  templateFlowsetID,
-		Length:     80, // 4 (header) + 4 (template header) + 18 * 4 (fields)
-		TemplateID: templateID,
-		FieldCount: 18,
-		Fields: [18]struct{ Type, Length uint16 }{
+		TemplateID: templateIDIPv4,
+		FieldCount: 17,
+		Fields: [17]struct{ Type, Length uint16 }{
 			{Type: 1, Length: 4},  // IN_BYTES
 			{Type: 2, Length: 4},  // IN_PKTS
 			{Type: 4, Length: 1},  // PROTOCOL
-			{Type: 5, Length: 1},  // TOS
 			{Type: 6, Length: 1},  // TCP_FLAGS
 			{Type: 7, Length: 2},  // L4_SRC_PORT
-			{Type: 8, Length: 4},  // IPV4_SRC_ADDR
-			{Type: 9, Length: 1},  // SRC_NET
-			{Type: 10, Length: 2}, // INPUT_SNMP
 			{Type: 11, Length: 2}, // L4_DST_PORT
-			{Type: 12, Length: 4}, // IPV4_DST_ADDR
-			{Type: 13, Length: 1}, // DST_NET
+			{Type: 10, Length: 2}, // INPUT_SNMP
 			{Type: 14, Length: 2}, // OUTPUT_SNMP
-			{Type: 15, Length: 4}, // IPV4_NEXT_HOP
 			{Type: 21, Length: 4}, // LAST_SWITCHED
 			{Type: 22, Length: 4}, // FIRST_SWITCHED
-			{Type: 23, Length: 2}, // OUT_BYTES (same as IN_BYTES)
-			{Type: 24, Length: 2}, // OUT_PKTS (same as IN_PKTS)
+			{Type: 23, Length: 4}, // OUT_BYTES
+			{Type: 24, Length: 4}, // OUT_PKTS
+			{Type: 8, Length: 4},  // IPV4_SRC_ADDR
+			{Type: 9, Length: 1},  // SRC_NET
+			{Type: 12, Length: 4}, // IPV4_DST_ADDR
+			{Type: 13, Length: 1}, // DST_NET
+			{Type: 15, Length: 4}, // IPV4_NEXT_HOP
 		},
 	}
 
-	return binary.Write(buf, binary.BigEndian, template)
+	return binary.Write(buf, binary.BigEndian, templateIPv4)
 }
 
-func (d *NetFlowDriver) writeFlowRecord(buf *bytes.Buffer, fm *flowmessage.FlowMessage) error {
-	// Convert IP addresses from byte slices to uint32
-	srcAddr := ipToUint32(fm.SrcAddr)
-	dstAddr := ipToUint32(fm.DstAddr)
-	nextHop := ipToUint32(fm.NextHop)
+func (d *NetFlowDriver) writeIPv6Template(buf *bytes.Buffer) error {
+	templateIPv6 := struct {
+		TemplateID uint16
+		FieldCount uint16
+		Fields     [17]struct{ Type, Length uint16 }
+	}{
+		TemplateID: templateIDIPv6,
+		FieldCount: 17,
+		Fields: [17]struct{ Type, Length uint16 }{
+			{Type: 1, Length: 4},   // IN_BYTES
+			{Type: 2, Length: 4},   // IN_PKTS
+			{Type: 4, Length: 1},   // PROTOCOL
+			{Type: 6, Length: 1},   // TCP_FLAGS
+			{Type: 7, Length: 2},   // L4_SRC_PORT
+			{Type: 11, Length: 2},  // L4_DST_PORT
+			{Type: 10, Length: 2},  // INPUT_SNMP
+			{Type: 14, Length: 2},  // OUTPUT_SNMP
+			{Type: 21, Length: 4},  // LAST_SWITCHED
+			{Type: 22, Length: 4},  // FIRST_SWITCHED
+			{Type: 23, Length: 4},  // OUT_BYTES
+			{Type: 24, Length: 4},  // OUT_PKTS
+			{Type: 27, Length: 16}, // IPV6_SRC_ADDR
+			{Type: 29, Length: 1},  // IPV6_SRC_MASK
+			{Type: 28, Length: 16}, // IPV6_DST_ADDR
+			{Type: 30, Length: 1},  // IPV6_DST_MASK
+			{Type: 62, Length: 16}, // IPV6_NEXT_HOP
+		},
+	}
 
-	// Ensure that values fit within their respective field sizes
-	bytes := uint32(fm.Bytes)
-	packets := uint32(fm.Packets)
-	inIf := uint16(fm.InIf)
-	outIf := uint16(fm.OutIf)
+	return binary.Write(buf, binary.BigEndian, templateIPv6)
+}
 
-	// Convert nanoseconds to milliseconds
-	timeFlowEnd := uint32(fm.TimeFlowEndNs / 1000000)
-	timeFlowStart := uint32(fm.TimeFlowStartNs / 1000000)
-
-	// Write each field of the flow record
+func (d *NetFlowDriver) writeIPv4FlowData(buf *bytes.Buffer, flow *flowmessage.FlowMessage) error {
 	fields := []interface{}{
-		bytes,
-		packets,
-		uint8(fm.Proto),
-		uint8(fm.IpTos),
-		uint8(fm.TcpFlags),
-		uint16(fm.SrcPort),
-		srcAddr,
-		uint8(fm.SrcNet),
-		inIf,
-		uint16(fm.DstPort),
-		dstAddr,
-		uint8(fm.DstNet),
-		outIf,
-		nextHop,
-		timeFlowEnd,
-		timeFlowStart,
-		uint16(bytes),   // OutBytes (truncated to 16 bits)
-		uint16(packets), // OutPackets (truncated to 16 bits)
+		uint32(flow.Bytes),
+		uint32(flow.Packets),
+		uint8(flow.Proto),
+		uint8(flow.TcpFlags),
+		uint16(flow.SrcPort),
+		uint16(flow.DstPort),
+		uint16(flow.InIf),
+		uint16(flow.OutIf),
+		uint32(flow.TimeFlowEndNs / 1000000),   // Convert ns to ms
+		uint32(flow.TimeFlowStartNs / 1000000), // Convert ns to ms
+		uint32(flow.Bytes),                     // OUT_BYTES (using Bytes as a placeholder)
+		uint32(flow.Packets),                   // OUT_PKTS (using Packets as a placeholder)
+		flow.SrcAddr[:4],                       // Full IPv4 source address
+		uint8(flow.SrcNet),
+		flow.DstAddr[:4], // Full IPv4 destination address
+		uint8(flow.DstNet),
+		flow.NextHop[:4], // Full IPv4 next hop
 	}
 
 	for _, field := range fields {
 		if err := binary.Write(buf, binary.BigEndian, field); err != nil {
-			return err
+			return fmt.Errorf("failed to write IPv4 field: %w", err)
 		}
 	}
 
 	return nil
 }
 
-// Helper function to convert IP address from byte slice to uint32
-func ipToUint32(ip []byte) uint32 {
-	if len(ip) == 4 {
-		return binary.BigEndian.Uint32(ip)
+func (d *NetFlowDriver) writeIPv6FlowData(buf *bytes.Buffer, flow *flowmessage.FlowMessage) error {
+	fields := []interface{}{
+		uint32(flow.Bytes),
+		uint32(flow.Packets),
+		uint8(flow.Proto),
+		uint8(flow.TcpFlags),
+		uint16(flow.SrcPort),
+		uint16(flow.DstPort),
+		uint16(flow.InIf),
+		uint16(flow.OutIf),
+		uint32(flow.TimeFlowEndNs / 1000000),   // Convert ns to ms
+		uint32(flow.TimeFlowStartNs / 1000000), // Convert ns to ms
+		uint32(flow.Bytes),                     // OUT_BYTES (using Bytes as a placeholder)
+		uint32(flow.Packets),                   // OUT_PKTS (using Packets as a placeholder)
+		flow.SrcAddr[:16],                      // IPv6 source address (16 bytes)
+		uint8(flow.SrcNet),
+		flow.DstAddr[:16], // IPv6 destination address (16 bytes)
+		uint8(flow.DstNet),
+		flow.NextHop[:16], // IPv6 next hop (16 bytes)
 	}
-	return 0 // Return 0 for invalid IP addresses
+
+	for _, field := range fields {
+		if err := binary.Write(buf, binary.BigEndian, field); err != nil {
+			return fmt.Errorf("failed to write IPv6 field: %w", err)
+		}
+	}
+	return nil
+}
+
+func (d *NetFlowDriver) writeFlowData(buf *bytes.Buffer, flow *flowmessage.FlowMessage) error {
+	if len(flow.SrcAddr) == 4 { // IPv4
+		return d.writeIPv4FlowData(buf, flow)
+	} else if len(flow.SrcAddr) == 16 { // IPv6
+		return d.writeIPv6FlowData(buf, flow)
+	}
+	return fmt.Errorf("unsupported IP version: %d bytes", len(flow.SrcAddr))
 }
 
 func (d *NetFlowDriver) writeDataFlowsetBatch(buf *bytes.Buffer, flows []*flowmessage.FlowMessage) error {
-	// Write data flowset header
-	if err := binary.Write(buf, binary.BigEndian, uint16(templateID)); err != nil {
-		return err
-	}
-	lengthPos := buf.Len()
-	if err := binary.Write(buf, binary.BigEndian, uint16(0)); err != nil { // Placeholder for length
-		return err
+	var flowsetBuf bytes.Buffer
+	var currentTemplateID uint16
+
+	for _, flow := range flows {
+		var templateID uint16
+		if len(flow.SrcAddr) == 4 { // IPv4
+			templateID = templateIDIPv4
+		} else if len(flow.SrcAddr) == 16 { // IPv6
+			templateID = templateIDIPv6
+		} else {
+			return fmt.Errorf("unsupported IP version: %d bytes", len(flow.SrcAddr))
+		}
+
+		// If templateID changes or flowset would exceed max size, write current flowset and start a new one
+		if templateID != currentTemplateID || flowsetBuf.Len()+flowRecordSize > maxFlowsetSize-dataFlowsetHeaderSize {
+			if flowsetBuf.Len() > 0 {
+				if err := d.writeFlowset(buf, currentTemplateID, flowsetBuf.Bytes()); err != nil {
+					return err
+				}
+				flowsetBuf.Reset()
+			}
+			currentTemplateID = templateID
+		}
+
+		// Write flow data to the flowset buffer
+		if err := d.writeFlowData(&flowsetBuf, flow); err != nil {
+			return fmt.Errorf("failed to write flow data: %w", err)
+		}
 	}
 
-	for _, fm := range flows {
-		if err := d.writeFlowRecord(buf, fm); err != nil {
+	// Write any remaining data in the buffer
+	if flowsetBuf.Len() > 0 {
+		if err := d.writeFlowset(buf, currentTemplateID, flowsetBuf.Bytes()); err != nil {
 			return err
 		}
 	}
 
-	// Update flowset length
-	length := uint16(buf.Len() - lengthPos + 2)
-	binary.BigEndian.PutUint16(buf.Bytes()[lengthPos:], length)
+	return nil
+}
+
+func (d *NetFlowDriver) writeFlowset(buf *bytes.Buffer, templateID uint16, data []byte) error {
+	// Write flowset header
+	if err := binary.Write(buf, binary.BigEndian, templateID); err != nil {
+		return fmt.Errorf("failed to write flowset header template ID: %w", err)
+	}
+	length := uint16(len(data) + dataFlowsetHeaderSize)
+	if err := binary.Write(buf, binary.BigEndian, length); err != nil {
+		return fmt.Errorf("failed to write flowset header length: %w", err)
+	}
+
+	// Write flowset data
+	if _, err := buf.Write(data); err != nil {
+		return fmt.Errorf("failed to write flowset data: %w", err)
+	}
 
 	return nil
 }
+
 func (d *NetFlowDriver) Close() error {
 	if err := d.sendBatch(); err != nil {
 		return fmt.Errorf("failed to send final batch: %w", err)
