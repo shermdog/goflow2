@@ -6,12 +6,19 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	flowmessage "github.com/netsampler/goflow2/v2/pb"
 	"github.com/netsampler/goflow2/v2/transport"
 	"google.golang.org/protobuf/proto"
 )
+
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return new(bytes.Buffer)
+	},
+}
 
 const (
 	netflowV9Version  = 9
@@ -79,30 +86,36 @@ func (d *NetFlowDriver) Send(key, data []byte) error {
 }
 
 func (d *NetFlowDriver) formatNetflowV9(fm *flowmessage.FlowMessage, sendTemplate bool) ([]byte, error) {
-	var buf bytes.Buffer
+	buf := bufferPool.Get().(*bytes.Buffer)
+	buf.Reset()               // Clear the buffer in case it was used before
+	defer bufferPool.Put(buf) // Return the buffer to the pool when we're done
 
 	// Write header
 	flowsetCount := uint16(1)
 	if sendTemplate {
 		flowsetCount++
 	}
-	if err := d.writeHeader(&buf, fm, flowsetCount); err != nil {
+	if err := d.writeHeader(buf, fm, flowsetCount); err != nil {
 		return nil, fmt.Errorf("failed to write header: %w", err)
 	}
 
 	// Write template flowset if needed
 	if sendTemplate {
-		if err := d.writeTemplate(&buf); err != nil {
+		if err := d.writeTemplate(buf); err != nil {
 			return nil, fmt.Errorf("failed to write template: %w", err)
 		}
 	}
 
 	// Write data flowset
-	if err := d.writeDataFlowset(&buf, fm); err != nil {
+	if err := d.writeDataFlowset(buf, fm); err != nil {
 		return nil, fmt.Errorf("failed to write data flowset: %w", err)
 	}
 
-	return buf.Bytes(), nil
+	// Create a copy of the buffer's bytes to return
+	result := make([]byte, buf.Len())
+	copy(result, buf.Bytes())
+
+	return result, nil
 }
 
 func (d *NetFlowDriver) writeHeader(buf *bytes.Buffer, fm *flowmessage.FlowMessage, flowsetCount uint16) error {
