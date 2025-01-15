@@ -309,14 +309,14 @@ func ConvertNetFlowDataSet(flowMessage *ProtoProducerMessage, version uint16, ba
 			if err := DecodeUNumber(v, &(flowMessage.Packets)); err != nil {
 				return err
 			}
-		case netflow.NFV9_FIELD_OUT_BYTES:
-			if err := DecodeUNumber(v, &(flowMessage.Bytes)); err != nil {
-				return err
-			}
-		case netflow.NFV9_FIELD_OUT_PKTS:
-			if err := DecodeUNumber(v, &(flowMessage.Packets)); err != nil {
-				return err
-			}
+		// case netflow.NFV9_FIELD_OUT_BYTES:
+		// 	if err := DecodeUNumber(v, &(flowMessage.Bytes)); err != nil {
+		// 		return err
+		// 	}
+		// case netflow.NFV9_FIELD_OUT_PKTS:
+		// 	if err := DecodeUNumber(v, &(flowMessage.Packets)); err != nil {
+		// 		return err
+		// 	}
 
 		// L4
 		case netflow.NFV9_FIELD_L4_SRC_PORT:
