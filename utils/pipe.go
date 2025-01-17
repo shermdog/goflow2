@@ -3,6 +3,7 @@ package utils
 import (
 	"bytes"
 	"fmt"
+	"net/netip"
 	"sync"
 
 	"github.com/netsampler/goflow2/v2/decoders/netflow"
@@ -14,6 +15,8 @@ import (
 	"github.com/netsampler/goflow2/v2/transport"
 	"github.com/netsampler/goflow2/v2/utils/templates"
 )
+
+var StaticSamplerAddress = netip.MustParseAddr("192.168.198.1")
 
 type FlowPipe interface {
 	DecodeFlow(msg interface{}) error
@@ -53,7 +56,6 @@ func (p *flowpipe) formatSend(flowMessageSet []producer.ProducerMessage) error {
 		}
 	}
 	return nil
-
 }
 
 func (p *flowpipe) parseConfig(cfg *PipeConfig) {
@@ -197,7 +199,7 @@ func (p *NetFlowPipe) DecodeFlow(msg interface{}) error {
 		Dst: pkt.Dst,
 
 		TimeReceived:   pkt.Received,
-		SamplerAddress: pkt.Src.Addr(),
+		SamplerAddress: StaticSamplerAddress, // Use the static address here
 	}
 
 	if p.producer == nil {
